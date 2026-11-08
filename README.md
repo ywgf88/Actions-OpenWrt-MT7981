@@ -1,8 +1,8 @@
 # Actions-OpenWrt-MT7981
 
-基于 **GitHub Actions** 自动编译的 OpenWrt 固件，面向 MT7981B（MediaTek Filogic）平台的两款运营商定制路由器：
+基于 **GitHub Actions** 自动编译的 OpenWrt 固件，面向 MT7981B（MediaTek Filogic）平台的三款运营商 / 品牌定制路由器：
 
-**CMCC RAX3000M** 与 **Qihoo 360T7**
+**CMCC RAX3000M**、**Qihoo 360T7** 与 **Cetron CT3003**
 
 固件源码为 OpenWrt 官方仓库，分支 **v25.12.2**；预置 PassWall2 与 Vantage 主题，IPv4 单栈，成品体积控制在 58MB 以内。
 
@@ -16,7 +16,8 @@
 | 芯片平台 | MediaTek Filogic **MT7981B**（`mediatek/filogic`） |
 | 设备 1 | **CMCC RAX3000M**（中国移动 RAX3000M，目标名 `cmcc_rax3000m`） |
 | 设备 2 | **Qihoo 360T7**（奇虎 360 T7，目标名 `qihoo_360t7`） |
-| 编译方式 | 一次构建同时产出两款设备的固件（`CONFIG_TARGET_MULTI_PROFILE=y`） |
+| 设备 3 | **Cetron CT3003**（目标名 `cetron_ct3003`，DTS `mt7981b-cetron-ct3003`，NAND + UBINIZE 布局） |
+| 编译方式 | 一次构建同时产出三款设备的固件（`CONFIG_TARGET_MULTI_PROFILE=y`） |
 | 运行环境 | GitHub Actions `ubuntu-22.04`，单次构建超时上限 360 分钟 |
 
 > 目标名以 OpenWrt 官方设备定义为准。刷机前请核对自己的硬件版本与目标名是否一致，尤其同型号存在不同存储版本时。
@@ -82,19 +83,20 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.2`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 检查固件体积 → 上传产物。
 
-其中 `Validate target config` 一步会强制检查两款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。
+其中 `Validate target config` 一步会强制检查三款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。为防这种静默丢弃，该步骤会先把 `.config` 的换行符统一为 LF，在第一次 `make defconfig` 加载 target 菜单之后，再用 `./scripts/config -e` 逐条显式启用三款设备，然后重新 `make defconfig`。
 
 ---
 
 ## 产物与 Release
 
 - **固件位置**：`bin/targets/mediatek/filogic/`
-- **文件名**：`*squashfs-sysupgrade.itb`（filogic 目标只生成 `.itb`，没有 `.bin`）
+- **文件名**：`*squashfs-sysupgrade.itb` 或 `*squashfs-sysupgrade.bin`（依设备而定；三者均为 `sysupgrade-tar` 打包）
+- **CT3003 额外产物**：`*.factory.bin`（带 `cetron-header rd30 CT3003` 头，用于从原厂固件首次刷入）
 - **Release 命名**：`年.月.日-时分`（例：`2026.11.08-1530`）
 - **Release 保留策略**：只保留最新 **3** 个，更早的 tag 与附件自动删除
 - **Artifacts**：同时上传完整固件目录，便于不发布 Release 时也能下载
 
-构建成功后，请到 **Releases** 页面下载对应自己设备的 `sysupgrade` 文件。
+构建成功后，请到 **Releases** 页面下载对应自己设备的 `sysupgrade` 文件；CT3003 首次从原厂固件迁移时用 `factory.bin`。
 
 ---
 
@@ -134,6 +136,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 - 本仓库只负责**编译**固件，不提供刷机包适配与救砖服务，刷机有风险。
 - 升级建议走 LuCI 的「系统 → 备份与升级」，用 `sysupgrade` 文件，**不要**保留旧配置跨大版本升级（尤其是从带 IPv6 的固件切到本 IPv4 单栈固件）。
+- **CT3003** 从原厂固件迁移时用 `factory.bin`；之后升级与其他两款设备一样用 `sysupgrade`。
 - 首次进入系统后请立刻到「系统 → 管理权」设置 root 密码，并在 PassWall2 中自行导入节点/订阅。
 
 ---
