@@ -5,9 +5,9 @@
 # 执行目录：OpenWrt 源码根目录
 #
 # 1. 加入 PassWall2 依赖包源码（官方 OpenWrt packages feed 里没有 xray-core / chinadns-ng 等）
-echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main' >>feeds.conf.default
+echo 'src-git passwall_packages https://github.com/openwrt-passwall/openwrt-passwall-packages.git' >>feeds.conf.default
 # 2. 加入 PassWall2 LuCI 插件源码
-echo 'src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2.git;main' >>feeds.conf.default
+echo 'src-git passwall2 https://github.com/openwrt-passwall/openwrt-passwall2.git' >>feeds.conf.default
 # 3. 引入 Vantage 主题（LuCI 官方源没有这个主题，单独拉源码）
 git clone --depth 1 https://github.com/anothaDev/luci-theme-vantage.git /tmp/vantage-src
 rm -rf package/luci-theme-vantage package/luci-app-vantage
