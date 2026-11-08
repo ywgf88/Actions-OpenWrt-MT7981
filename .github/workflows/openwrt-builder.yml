@@ -1,0 +1,167 @@
+#
+# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M & Qihoo 360T7
+# Target: mediatek/filogic (MT7981B)
+# Features: IPv4-only / Vantage theme / PassWall2 / firmware <= 58MB
+#
+name: OpenWrt Builder
+on:
+  workflow_dispatch:
+env:
+  REPO_URL: https://github.com/openwrt/openwrt
+  REPO_BRANCH: v25.12.2
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  MAX_FIRMWARE_MB: 58
+  TZ: Asia/Shanghai
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+    - name: Validate target config
+      run: |
+        cd openwrt
+        make defconfig
+        echo "==== 关键配置检查 ===="
+        grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config \
+          || { echo "❌ 未选中 CMCC RAX3000M"; exit 1; }
+        grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_qihoo_360t7=y' .config \
+          || { echo "❌ 未选中 Qihoo 360T7"; exit 1; }
+        grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config || echo "⚠️ PassWall2 未选中"
+        grep -q '^CONFIG_PACKAGE_luci-theme-vantage=y' .config || echo "⚠️ Vantage 主题未选中"
+        echo "版本号：$(grep '^CONFIG_VERSION_NUMBER' .config)"
+        echo "IPv6 组件 odhcp6c：$(grep -c '^CONFIG_PACKAGE_odhcp6c=y' .config || true)"
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        # 收集所有已选设备名，拼到产物名里
+        devices=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1' | tr '\n' '_' | sed 's/_$//')
+        echo "DEVICE_NAME=_${devices}" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+    - name: Check firmware size
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/mediatek/filogic
+        ls -lh
+        fw_list=$(ls *sysupgrade*.bin *sysupgrade*.itb 2>/dev/null)
+        [ -z "$fw_list" ] && { echo "❌ 未找到 sysupgrade 固件"; exit 1; }
+        max_size=0
+        for fw in $fw_list; do
+          size=$(stat -c %s "$fw")
+          mb=$((size / 1024 / 1024))
+          echo "固件 $fw 体积 ${mb}MB"
+          if [ "$size" -gt "$max_size" ]; then max_size=$size; fi
+        done
+        max_mb=$((max_size / 1024 / 1024))
+        echo "最大固件体积 ${max_mb}MB，上限 ${MAX_FIRMWARE_MB}MB"
+        if [ "$max_size" -gt $((MAX_FIRMWARE_MB * 1024 * 1024)) ]; then
+          echo "❌ 固件超过 ${MAX_FIRMWARE_MB}MB，请在 .config 里继续精简软件包"
+          exit 1
+        fi
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success'
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
