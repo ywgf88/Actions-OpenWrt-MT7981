@@ -103,7 +103,13 @@ jobs:
           exit 1
         fi
         # 收集所有已选设备名，拼到产物名里
-        devices=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1' | tr '\n' '_' | sed 's/_$//')
+        devices=$(grep -oE '^CONFIG_TARGET_DEVICE_[^=]+=y' .config | sed -E 's/.*DEVICE_//; s/=y$//' | sort -u | paste -sd_ -)
+        if [ -z "$devices" ]; then
+          devices=$(ls bin/targets/mediatek/filogic/*squashfs-sysupgrade* 2>/dev/null \
+                    | sed -E 's#^.*/openwrt-[^/]*-mediatek-filogic-##; s#-squashfs-sysupgrade.*$##' \
+                    | sort -u | paste -sd_ -)
+        fi
+        [ -z "$devices" ] && devices=mediatek_filogic
         echo "DEVICE_NAME=_${devices}" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
     - name: Check space usage
@@ -114,10 +120,16 @@ jobs:
       run: |
         cd openwrt/bin/targets/mediatek/filogic
         ls -lh
-        fw_list=$(ls *sysupgrade*.bin *sysupgrade*.itb 2>/dev/null)
-        [ -z "$fw_list" ] && { echo "❌ 未找到 sysupgrade 固件"; exit 1; }
+        # 用 nullglob + 数组列举，避免某个后缀不存在时 ls 返回非 0
+        # （filogic 目标只生成 .itb，没有 .bin；bash -e 下会把 ls 的退出码 2 当成致命错误）
+        shopt -s nullglob
+        fw_list=( *sysupgrade*.bin *sysupgrade*.itb )
+        if [ ${#fw_list[@]} -eq 0 ]; then
+          echo "❌ 未找到 sysupgrade 固件"
+          exit 1
+        fi
         max_size=0
-        for fw in $fw_list; do
+        for fw in "${fw_list[@]}"; do
           size=$(stat -c %s "$fw")
           mb=$((size / 1024 / 1024))
           echo "固件 $fw 体积 ${mb}MB"
