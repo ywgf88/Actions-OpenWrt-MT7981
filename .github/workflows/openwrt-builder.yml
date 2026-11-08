@@ -63,15 +63,26 @@ jobs:
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
+        # 统一换行符为 Unix（防止 Windows CRLF 导致 Kconfig 解析失败）
+        sed -i 's/\r$//' .config
         $GITHUB_WORKSPACE/$DIY_P2_SH
     - name: Validate target config
       run: |
         cd openwrt
+        # 第一次 defconfig：让 Kconfig 生成目标菜单
+        make defconfig
+        # 用 scripts/config 显式选中目标设备（比直接写 .config 更可靠）
+        ./scripts/config -e CONFIG_TARGET_mediatek
+        ./scripts/config -e CONFIG_TARGET_mediatek_filogic
+        ./scripts/config -e CONFIG_TARGET_MULTI_PROFILE
+        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m
+        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7
+        # 第二次 defconfig：解析依赖
         make defconfig
         echo "==== 关键配置检查 ===="
-        grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config \
+        grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config \
           || { echo "❌ 未选中 CMCC RAX3000M"; exit 1; }
-        grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_qihoo_360t7=y' .config \
+        grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7=y' .config \
           || { echo "❌ 未选中 Qihoo 360T7"; exit 1; }
         grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config || echo "⚠️ PassWall2 未选中"
         grep -q '^CONFIG_PACKAGE_luci-theme-vantage=y' .config || echo "⚠️ Vantage 主题未选中"
@@ -127,7 +138,7 @@ jobs:
         path: openwrt/bin
     - name: Organize files
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
@@ -141,7 +152,7 @@ jobs:
         path: ${{ env.FIRMWARE }}
     - name: Generate release tag
       id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
@@ -157,11 +168,13 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
+      continue-on-error: true
       with:
         retain_days: 0
         keep_minimum_runs: 2
     - name: Remove old Releases
       uses: dev-drprasad/delete-older-releases@master
+      continue-on-error: true
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
         keep_latest: 3
