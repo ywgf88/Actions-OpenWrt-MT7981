@@ -83,7 +83,9 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.2`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 检查固件体积 → 上传产物。
 
-其中 `Validate target config` 一步会强制检查三款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。为防这种静默丢弃，该步骤会先把 `.config` 的换行符统一为 LF，在第一次 `make defconfig` 加载 target 菜单之后，再用 `./scripts/config -e` 逐条显式启用三款设备，然后重新 `make defconfig`。
+其中 `Validate target config` 一步会强制检查三款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。为防这种静默丢弃，该步骤会先把 `.config` 的换行符统一为 LF，执行一次 `make defconfig`，然后检查三款设备的 `DEVICE_` 符号，发现哪个被丢弃就直接补写回 `.config`，再重新 `make defconfig` 解析一次，最后用 grep 硬校验。
+
+> 旧教程里的 `./scripts/config -e` 在 v25.12.2 上不可用：`scripts/config` 已经是目录而不是可执行脚本，调用会报 `Is a directory` / exit 126。
 
 ---
 
