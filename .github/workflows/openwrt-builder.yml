@@ -1,5 +1,5 @@
 #
-# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M & Qihoo 360T7
+# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003
 # Target: mediatek/filogic (MT7981B)
 # Features: IPv4-only / Vantage theme / PassWall2 / firmware <= 58MB
 #
@@ -69,14 +69,25 @@ jobs:
       run: |
         set -e
         cd openwrt
+        # Windows 上传的 .config 可能带 CRLF，Kconfig 会整行跳过 CONFIG
+        sed -i 's/\r$//' .config
+        make defconfig
+        # 第一次 defconfig 之后 target 菜单才加载，此时再显式启用三项设备，
+        # 避免 .config 里的 DEVICE_ 符号被 make defconfig 静默丢弃
+        ./scripts/config -e CONFIG_TARGET_mediatek
+        ./scripts/config -e CONFIG_TARGET_mediatek_filogic
+        ./scripts/config -e CONFIG_TARGET_MULTI_PROFILE
+        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m
+        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7
+        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cetron_ct3003
         make defconfig
         echo "==== defconfig 后实际选中的设备项 ===="
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config || true
         echo "==== 关键配置检查 ===="
-        grep -qE '^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config \
-          || { echo "❌ 未选中 CMCC RAX3000M"; exit 1; }
-        grep -qE '^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_qihoo_360t7=y' .config \
-          || { echo "❌ 未选中 Qihoo 360T7"; exit 1; }
+        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003; do
+          grep -qE "^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_${dev}=y" .config \
+            || { echo "❌ 未选中设备 ${dev}"; exit 1; }
+        done
         grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config || echo "::warning::PassWall2 未选中，请检查 feeds 与 .config"
         grep -q '^CONFIG_PACKAGE_luci-theme-vantage=y' .config || echo "::warning::Vantage 主题未选中，请检查 diy-part1.sh"
         echo "版本号：$(grep '^CONFIG_VERSION_NUMBER' .config || true)"
