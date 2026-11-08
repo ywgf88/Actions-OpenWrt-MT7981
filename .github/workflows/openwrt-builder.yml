@@ -72,14 +72,12 @@ jobs:
         # Windows 上传的 .config 可能带 CRLF，Kconfig 会整行跳过 CONFIG
         sed -i 's/\r$//' .config
         make defconfig
-        # 第一次 defconfig 之后 target 菜单才加载，此时再显式启用三项设备，
-        # 避免 .config 里的 DEVICE_ 符号被 make defconfig 静默丢弃
-        ./scripts/config -e CONFIG_TARGET_mediatek
-        ./scripts/config -e CONFIG_TARGET_mediatek_filogic
-        ./scripts/config -e CONFIG_TARGET_MULTI_PROFILE
-        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m
-        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7
-        ./scripts/config -e CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cetron_ct3003
+        # 若某设备的 DEVICE_ 符号被 make defconfig 静默丢弃，直接补写回 .config 再解析一次
+        # （旧版教程里的 ./scripts/config -e 在 v25.12.2 不可用：scripts/config 已是目录，会报 exit 126）
+        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003; do
+          grep -qE "^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_${dev}=y" .config \
+            || { echo "补写设备符号：${dev}"; echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${dev}=y" >> .config; }
+        done
         make defconfig
         echo "==== defconfig 后实际选中的设备项 ===="
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config || true
