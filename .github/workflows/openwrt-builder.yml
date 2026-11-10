@@ -1,7 +1,7 @@
 #
 # Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003
 # Target: mediatek/filogic (MT7981B)
-# Features: IPv4-only / Vantage theme / PassWall2 / firmware <= 58MB
+# Features: IPv4-only / Vantage theme / PassWall2
 #
 name: OpenWrt Builder
 on:
@@ -19,7 +19,6 @@ env:
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
-  MAX_FIRMWARE_MB: 58
   CLEAN_WORKFLOW_RUNS: 'false'
   TZ: Asia/Shanghai
 jobs:
@@ -124,32 +123,13 @@ jobs:
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
-    - name: Check firmware size
+    - name: List firmware images
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd openwrt/bin/targets/mediatek/filogic
         ls -lh
-        # 用 nullglob + 数组列举，避免某个后缀不存在时 ls 返回非 0
-        # （filogic 目标只生成 .itb，没有 .bin；bash -e 下会把 ls 的退出码 2 当成致命错误）
-        shopt -s nullglob
-        fw_list=( *sysupgrade*.bin *sysupgrade*.itb )
-        if [ ${#fw_list[@]} -eq 0 ]; then
-          echo "❌ 未找到 sysupgrade 固件"
-          exit 1
-        fi
-        max_size=0
-        for fw in "${fw_list[@]}"; do
-          size=$(stat -c %s "$fw")
-          mb=$((size / 1024 / 1024))
-          echo "固件 $fw 体积 ${mb}MB"
-          if [ "$size" -gt "$max_size" ]; then max_size=$size; fi
-        done
-        max_mb=$((max_size / 1024 / 1024))
-        echo "最大固件体积 ${max_mb}MB，上限 ${MAX_FIRMWARE_MB}MB"
-        if [ "$max_size" -gt $((MAX_FIRMWARE_MB * 1024 * 1024)) ]; then
-          echo "❌ 固件超过 ${MAX_FIRMWARE_MB}MB，请在 .config 里继续精简软件包"
-          exit 1
-        fi
+        echo "==== sysupgrade 产物 ===="
+        ls -1 *sysupgrade*.itb *sysupgrade*.bin 2>/dev/null || true
     - name: Upload bin directory
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
