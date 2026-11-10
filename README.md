@@ -4,7 +4,7 @@
 
 **CMCC RAX3000M**、**Qihoo 360T7** 与 **Cetron CT3003**
 
-固件源码为 OpenWrt 官方仓库，分支 **v25.12.2**；预置 PassWall2 与 Vantage 主题，IPv4 单栈，成品体积控制在 58MB 以内。
+固件源码为 OpenWrt 官方仓库，分支 **v25.12.2**；预置 PassWall2 与 Vantage 主题，IPv4 单栈。
 
 ---
 
@@ -61,7 +61,6 @@
 | 界面语言 | 简体中文 |
 | 时区 | `CST-8`（China Standard Time，UTC+8） |
 | 网络栈 | IPv4 单栈，不生成任何 IPv6 地址段与 `wan6` 接口 |
-| 固件体积上限 | 58MB（超出则构建直接失败） |
 
 **想把默认 IP 改成别的网段**（例如 `192.168.100.1`）：
 
@@ -81,7 +80,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 2. 点击 **Run workflow**，选择 `main` 分支后确认；
 3. 等待构建完成（首次全量编译耗时较长，通常在 1～3 小时）。
 
-构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.2`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 检查固件体积 → 上传产物。
+构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.2`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 上传产物。
 
 其中 `Validate target config` 一步会强制检查三款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。为防这种静默丢弃，该步骤会先把 `.config` 的换行符统一为 LF，执行一次 `make defconfig`，然后检查三款设备的 `DEVICE_` 符号，发现哪个被丢弃就直接补写回 `.config`，再重新 `make defconfig` 解析一次，最后用 grep 硬校验。
 
@@ -106,7 +105,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 ```
 ├── .github/workflows/
-│   └── openwrt-builder.yml   # 唯一工作流：编译、校验体积、发布 Release
+│   └── openwrt-builder.yml   # 唯一工作流：编译、发布 Release
 ├── .config                    # 编译配置：目标设备、插件、主题、版本信息
 ├── diy-part1.sh               # feeds 更新前执行：加 PassWall2 与 Vantage 源
 ├── diy-part2.sh               # feeds 安装后执行：改默认主题、时区、IPv4 单栈
@@ -127,7 +126,6 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 | 换默认 IP 网段 | `diy-part2.sh` 第 3 条 `sed` |
 | 换默认主题 | `.config` 里 `CONFIG_PACKAGE_luci-theme-*` + `diy-part2.sh` 第 1 条替换串 |
 | 增加/删除插件 | `.config` 中增删 `CONFIG_PACKAGE_xxx=y` / `not set` |
-| 放开固件体积 | 工作流 `env.MAX_FIRMWARE_MB` |
 | 改源码分支 | 工作流 `env.REPO_BRANCH` |
 | 加代理核心（SS/SSR/Trojan） | `.config` 中打开对应的 `luci-app-passwall2_INCLUDE_*` 开关 |
 | 保留更多旧 Release | 工作流 `keep_latest` |
