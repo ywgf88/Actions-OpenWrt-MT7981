@@ -1,7 +1,7 @@
 #
 # Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003
 # Target: mediatek/filogic (MT7981B)
-# Features: IPv4-only / Vantage theme / PassWall2
+# Features: IPv4-only / Vantage theme / PassWall2 / SQM / DDNS / WOL / nlbwmon / UPnP / WireGuard
 #
 name: OpenWrt Builder
 on:
@@ -87,6 +87,17 @@ jobs:
         done
         grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config || echo "::warning::PassWall2 未选中，请检查 feeds 与 .config"
         grep -q '^CONFIG_PACKAGE_luci-theme-vantage=y' .config || echo "::warning::Vantage 主题未选中，请检查 diy-part1.sh"
+        echo "==== 家庭场景插件检查 ===="
+        # 包名写错时 make defconfig 会静默丢弃该符号且不报错，这里硬拦，避免编出缺插件的固件
+        missing=""
+        for pkg in luci-app-sqm luci-app-ddns luci-app-wol luci-app-nlbwmon luci-app-upnp luci-proto-wireguard luci-app-commands; do
+          grep -q "^CONFIG_PACKAGE_${pkg}=y" .config || missing="$missing ${pkg}"
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::以下插件未被解析，包名可能不在 feeds：${missing}"
+          exit 1
+        fi
+        echo "✅ 7 个家庭场景插件已全部选中"
         echo "版本号：$(grep '^CONFIG_VERSION_NUMBER' .config || true)"
         echo "IPv6 组件 odhcp6c：$(grep -c '^CONFIG_PACKAGE_odhcp6c=y' .config || true)"
     - name: Download package
