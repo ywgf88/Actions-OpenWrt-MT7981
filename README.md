@@ -43,6 +43,20 @@
   - 依赖源：`Openwrt-Passwall/openwrt-passwall-packages`（`main` 分支）
   - 插件源：`Openwrt-Passwall/openwrt-passwall2`（`main` 分支）
 
+**家庭场景工具**
+
+| 插件 | 作用 | 默认状态 |
+| --- | --- | --- |
+| `luci-app-sqm` | 智能限速排队（SQM/cake），防止单台设备占满带宽 | 编译进固件 |
+| `luci-app-ddns` | 动态域名解析，宽带无固定公网 IP 时远程回家的前提 | 编译进固件 |
+| `luci-app-wol` | 网络唤醒，远程开启 NAS 或台式机 | 编译进固件 |
+| `luci-app-nlbwmon` | 按设备/IP 统计流量，定位谁在占用带宽 | 编译进固件 |
+| `luci-app-upnp` | UPnP / NAT-PMP 端口自动映射，BT 与联机游戏用 | 编译进固件 |
+| `luci-proto-wireguard` | WireGuard 远程接入，内核态实现，比 tailscale 更轻更快 | 编译进固件 |
+| `luci-app-commands` | 网页中执行自定义命令，调试与脚本入口 | 编译进固件 |
+
+以上插件连同各自的中文语言包一并编入镜像。若嫌固件变大，把 `.config` 里对应 `CONFIG_PACKAGE_*` 行删掉或改成 `is not set` 即可。
+
 **未包含（为控制体积刻意裁掉）**
 
 - `luci-app-ttyd` —— 网页终端
