@@ -1,10 +1,9 @@
-
-define Device/cetron_ct3003-ubootmod
 	DEVICE_VENDOR := Cetron
 	DEVICE_MODEL := CT3003
 	DEVICE_VARIANT := (OpenWrt U-Boot layout)
 	DEVICE_DTS := mt7981b-cetron-ct3003-ubootmod
 	DEVICE_DTS_DIR := ../dts
+	SUPPORTED_DEVICES += cetron,ct3003-ubootmod
 	DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
 	UBINIZE_OPTS := -E 5
 	BLOCKSIZE := 128k
@@ -20,5 +19,3 @@ define Device/cetron_ct3003-ubootmod
 		fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
 	DEVICE_COMPAT_VERSION := 1.2
 	DEVICE_COMPAT_MESSAGE := Flash layout changes require bootloader update
-endef
-TARGET_DEVICES += cetron_ct3003-ubootmod

@@ -25,20 +25,24 @@ MK=target/linux/mediatek/image/filogic.mk
 cp "$BASE/dts/mt7981b-cetron-ct3003.dtsi" "$DTS_DIR/"
 cp "$BASE/dts/mt7981b-cetron-ct3003-ubootmod.dts" "$DTS_DIR/"
 
-if ! grep -q 'define Device/cetron_ct3003-ubootmod' "$MK"; then
-  awk -v inc="$BASE/dts/filogic-ubootmod.mk.inc" '
-    { print }
-    (!done && $0 == "TARGET_DEVICES += cetron_ct3003") {
-      while ((getline l < inc) > 0) print l
-      close(inc)
-      done = 1
+if ! grep -q 'mt7981b-cetron-ct3003-ubootmod' "$MK"; then
+  awk -v body="$BASE/dts/ct3003-ubootmod-body.mk" '
+    /^define Device\/cetron_ct3003$/ {
+      inblk = 1
+      print "define Device/cetron_ct3003"
+      while ((getline l < body) > 0) print l
+      close(body)
+      next
     }
-    END { if (!done) exit 3 }
+    inblk && $0 == "endef" { inblk = 0; print "endef"; next }
+    inblk { next }
+    { print }
+    END { if (inblk) exit 4 }
   ' "$MK" > "$MK.new" && mv "$MK.new" "$MK"
 fi
 
-grep -q 'define Device/cetron_ct3003-ubootmod' "$MK" || { echo "ERROR: filogic.mk 里没插入 ubootmod 设备定义"; exit 1; }
-grep -q 'TARGET_DEVICES += cetron_ct3003-ubootmod' "$MK" || { echo "ERROR: ubootmod 设备未登记到 TARGET_DEVICES"; exit 1; }
-echo "CT3003 ubootmod 设备定义已注入 filogic.mk"
+grep -q 'mt7981b-cetron-ct3003-ubootmod' "$MK" || { echo "ERROR: filogic.mk 未切换到 ubootmod 定义"; exit 1; }
+grep -q 'IMAGES := sysupgrade.itb' "$MK" || { echo "ERROR: ITB 规则未写入"; exit 1; }
+echo "CT3003 已切换为 ubootmod/FIT(itb) 定义（设备名保持 cetron_ct3003）"
 
 echo "diy-part2 done."
