@@ -1,5 +1,5 @@
 #
-# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003
+# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003 (U-Boot layout)
 # Target: mediatek/filogic (MT7981B)
 # Features: IPv4-only / Vantage theme / PassWall2 / SQM / DDNS / WOL / nlbwmon / UPnP / WireGuard
 #
@@ -73,7 +73,7 @@ jobs:
         make defconfig
         # 若某设备的 DEVICE_ 符号被 make defconfig 静默丢弃，直接补写回 .config 再解析一次
         # （旧版教程里的 ./scripts/config -e 在 v25.12.2 不可用：scripts/config 已是目录，会报 exit 126）
-        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003; do
+        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003_ubootmod; do
           grep -qE "^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_${dev}=y" .config \
             || { echo "补写设备符号：${dev}"; echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${dev}=y" >> .config; }
         done
@@ -81,7 +81,7 @@ jobs:
         echo "==== defconfig 后实际选中的设备项 ===="
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config || true
         echo "==== 关键配置检查 ===="
-        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003; do
+        for dev in cmcc_rax3000m qihoo_360t7 cetron_ct3003_ubootmod; do
           grep -qE "^CONFIG_TARGET_(DEVICE_)?mediatek_filogic_DEVICE_${dev}=y" .config \
             || { echo "❌ 未选中设备 ${dev}"; exit 1; }
         done
@@ -122,6 +122,9 @@ jobs:
           exit 1
         fi
         # 收集所有已选设备名，拼到产物名里
+        echo "==== 关键产物检查：CT3003 必须是 ubootmod 的 itb ===="
+        ls -l bin/targets/mediatek/filogic/*cetron_ct3003-ubootmod*sysupgrade.itb \
+          || { echo "::error::CT3003 没有生成 ubootmod 的 .itb 产物，请检查 filogic.mk 注入与设备符号"; exit 1; }
         devices=$(grep -oE '^CONFIG_TARGET_DEVICE_[^=]+=y' .config | sed -E 's/.*DEVICE_//; s/=y$//' | sort -u | paste -sd_ -)
         if [ -z "$devices" ]; then
           devices=$(ls bin/targets/mediatek/filogic/*squashfs-sysupgrade* 2>/dev/null \

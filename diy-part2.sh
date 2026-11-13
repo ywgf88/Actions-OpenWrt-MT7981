@@ -13,4 +13,32 @@ sed -i "s/timezone='GMT0'/timezone='CST-8'/" package/base-files/files/bin/config
 # 4. IPv4 单栈：让首次生成配置时完全不创建 IPv6 地址段与 wan6
 #    （config_generate 里所有 IPv6 初始化都用 /proc/sys/net/ipv6 做判断，屏蔽掉即可）
 sed -i 's|\[ -e /proc/sys/net/ipv6 \]|[ -e /proc/sys/net/ipv6-disabled ]|g' package/base-files/files/bin/config_generate
+
+# 5. CT3003 改成 ubootmod（FIT / .itb）布局
+#    目的：用户机器已刷只认 itb 的新 uboot，产物要与 rax3000m / 360t7 一样是 sysupgrade.itb
+#    做法照 ImmortalWrt 的 cetron_ct3003-ubootmod：新增 ubootmod 专用 DTS（ubi 铺满 flash、内核放 fit 卷），
+#    并在 filogic.mk 里加一个独立的设备定义（原 stock 定义保持不动，互不影响）
+BASE="$(cd "$(dirname "$0")" && pwd)"
+DTS_DIR=target/linux/mediatek/dts
+MK=target/linux/mediatek/image/filogic.mk
+
+cp "$BASE/dts/mt7981b-cetron-ct3003.dtsi" "$DTS_DIR/"
+cp "$BASE/dts/mt7981b-cetron-ct3003-ubootmod.dts" "$DTS_DIR/"
+
+if ! grep -q 'define Device/cetron_ct3003-ubootmod' "$MK"; then
+  awk -v inc="$BASE/dts/filogic-ubootmod.mk.inc" '
+    { print }
+    (!done && $0 == "TARGET_DEVICES += cetron_ct3003") {
+      while ((getline l < inc) > 0) print l
+      close(inc)
+      done = 1
+    }
+    END { if (!done) exit 3 }
+  ' "$MK" > "$MK.new" && mv "$MK.new" "$MK"
+fi
+
+grep -q 'define Device/cetron_ct3003-ubootmod' "$MK" || { echo "ERROR: filogic.mk 里没插入 ubootmod 设备定义"; exit 1; }
+grep -q 'TARGET_DEVICES += cetron_ct3003-ubootmod' "$MK" || { echo "ERROR: ubootmod 设备未登记到 TARGET_DEVICES"; exit 1; }
+echo "CT3003 ubootmod 设备定义已注入 filogic.mk"
+
 echo "diy-part2 done."
