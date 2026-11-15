@@ -54,12 +54,15 @@
 | `luci-app-upnp` | UPnP / NAT-PMP 端口自动映射，BT 与联机游戏用 | 编译进固件 |
 | `luci-proto-wireguard` | WireGuard 远程接入，内核态实现，比 tailscale 更轻更快 | 编译进固件 |
 | `luci-app-commands` | 网页中执行自定义命令，调试与脚本入口 | 编译进固件 |
+| `luci-app-ttyd` | 网页终端（内置 ttyd，走 WebSocket），改配置看日志不用另开 SSH 工具 | 编译进固件 |
+| `luci-app-dawn` | 802.11k/v/r 快速漫游，多 AP 组网时终端不来回断线 | 编译进固件 |
+| `luci-app-wifischedule` | 按时间段开关 Wi-Fi 射频（夜间关闭 Wi-Fi） | 编译进固件 |
+| `zerotier` | ZeroTier 组网，无公网 IP 也能远程回家；官方无 LuCI 界面，用 `zerotier-cli` / `uci` 配置 | 编译进固件 |
 
 以上插件连同各自的中文语言包一并编入镜像。若嫌固件变大，把 `.config` 里对应 `CONFIG_PACKAGE_*` 行删掉或改成 `is not set` 即可。
 
 **未包含（为控制体积刻意裁掉）**
 
-- `luci-app-ttyd` —— 网页终端
 - `luci-app-vantage` —— Vantage 主题的配套设置面板（仅编译主题本体）
 - 全部 IPv6 组件：`odhcp6c`、`odhcpd-ipv6only`、`luci-proto-ipv6`、`ipv6helper`、`6in4`、`6to4`
 
@@ -115,6 +118,76 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 ---
 
+## CT3003 升级（UBI 卷名陷阱）
+
+CT3003 的 DTS（`mt7981b-cetron-ct3003-ubootmod`）把 128 MB 的 `ubi` 分区拆成下列卷，**U-Boot 与内核都按"卷名"取镜像**：
+
+| 卷名 | 作用 |
+| --- | --- |
+| `fit` | 生产镜像 —— U-Boot 的 `ubi_read_production=ubi read $loadaddr fit` 和内核 `root=/dev/fit0` 都读它 |
+| `recovery` | 恢复用 initramfs，生产镜像引导失败时自动兜底（`boot_ubi=run boot_production ; run boot_recovery ; ...`） |
+| `ubootenv` / `ubootenv2` | U-Boot 环境变量双备份 |
+| `rootfs_data` | overlay（squashfs 之外的持久化层） |
+
+### 坑在哪
+
+在运行系统里直接 `sysupgrade`，整个 FIT 会被写进名为 **`kernel`** 的卷（旧装机残留的卷名），而引导只读 `fit` —— 于是**刷完重启，版本一点没变**，`/etc/openwrt_release` 和 `uname -a` 还是旧的。
+
+同时，若 `fit` 卷偏小（首次实测为 214 LEBs = 25.9 MiB，而 v25.12.6 镜像 30.0 MiB），卷容量也塞不下，且**无法在运行系统里扩容**：`fit` 被 ubiblock 映射挂载为 `/rom`、`rootfs_data` 正在作 overlay，对它们执行 `ubirsvol` 一律返回 `error 16 (Resource busy)`；`available LEBs = 0` 也没有空隙可分。
+
+**升级后版本没变时，先定位镜像落在哪个卷里**：
+
+```sh
+ubinfo -a                                     # 看每个卷的 ID / 名称 / LEB 数
+dd if=/dev/ubi0_0 of=/tmp/k.bin bs=1M count=2 2>/dev/null
+strings /tmp/k.bin | grep -m1 -i 'Linux-6\.'   # 该卷里是哪一版内核
+```
+
+逐个卷读一遍即可看出：新镜像躺在哪个卷、名为 `fit` 的卷里是不是还装着旧镜像。
+
+### 正确做法一（标准）：交给 U-Boot 自己写
+
+U-Boot 环境变量里已有正确流程，它会"删旧卷 → 按镜像实际大小重建 → 写入"，天生不会容量不足：
+
+```
+bootmenu_4            = Load production system via TFTP then write to NAND
+ubi_write_production  = ubi check fit && ubi remove fit ; run ubi_remove_rootfs ;
+                        ubi create fit $filesize dynamic && ubi write $loadaddr fit $filesize
+```
+
+操作步骤：
+
+1. 串口（USB-TTL，3.3V）接板子，开机进 U-Boot `bootmenu`，选第 **4** 项；
+2. PC 网卡临时设为 `192.168.1.254`（U-Boot 里 `serverip=192.168.1.254`，`ipaddr=192.168.1.1`），起一个 TFTP 服务；
+3. TFTP 目录里放改名后的镜像：`immortalwrt-mediatek-filogic-cetron_ct3003-ubootmod-squashfs-sysupgrade.itb`（这是环境变量 `bootfile_upg` 期望的文件名，把本仓库产出的 `.itb` 改个名即可）。
+
+### 正确做法二（救急）：互换卷名
+
+新镜像其实已经写进某个卷、只是卷名不对时，用 `ubirename` 原子互换两个卷名即可，**数据一个字节都不动**：
+
+```sh
+ubirename /dev/ubi0 fit kernel kernel fit
+```
+
+要点：
+
+- 执行前后都用 `ubinfo -a` 确认：**名为 `fit` 的那个卷必须是 248 LEBs（装着新镜像的那个）**；
+- 旧镜像完整留在另一个卷里 —— 想回滚，把同一条命令**再执行一次**即可（互换语义，执行两次等于没换）；
+- 当前系统正在跑的 `/rom` 是 ubiblock 按**卷 ID** 绑定的，换名不影响当次运行，重启后才按新名字找镜像；
+- 换名后不再需要那个 `kernel` 卷，确认新固件稳定后可回收空间：`ubirmvol /dev/ubi0 -N kernel`（约 25.9 MiB）。
+
+### 实机验证记录
+
+| 项目 | 值 |
+| --- | --- |
+| 设备 | Cetron CT3003（`cetron_ct3003`，自建 ubootmod） |
+| 升级路径 | 25.12.2（`r32802-f505120278` / 6.12.74）→ **25.12.6（`r33311-981c978eff` / 6.12.112）** |
+| 完成方式 | `sysupgrade -n` 写入后镜像落在 `kernel` 卷，通过 `ubirename` 互换卷名完成引导 |
+| `fit` 卷 | 248 LEBs（31 490 048 B），容纳 31 429 203 B 的镜像 |
+| 验证项 | ttyd 1.7.7 / dawn 2025.11.07 / wifischedule 1.1.0 / zerotier 1.16.2 均已安装；radio0（2.4G HE20）与 radio1（5G HE80）正常 up |
+
+---
+
 ## 仓库结构
 
 ```
@@ -150,7 +223,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 - 本仓库只负责**编译**固件，不提供刷机包适配与救砖服务，刷机有风险。
 - 升级建议走 LuCI 的「系统 → 备份与升级」，用 `sysupgrade` 文件，**不要**保留旧配置跨大版本升级（尤其是从带 IPv6 的固件切到本 IPv4 单栈固件）。
-- **CT3003** 已是 OpenWrt U-Boot / FIT 布局，升级与其他两款设备一样用 `sysupgrade.itb`；本仓库不产出原厂固件首刷用的 `factory.bin`。
+- **CT3003** 已是 OpenWrt U-Boot / FIT 布局，但**不要直接在 LuCI 里 `sysupgrade`**：镜像会写进错误的 UBI 卷，导致"刷完版本一点没变"，原因与正确做法见上文「CT3003 升级（UBI 卷名陷阱）」。本仓库不产出原厂固件首刷用的 `factory.bin`。
 - 首次进入系统后请立刻到「系统 → 管理权」设置 root 密码，并在 PassWall2 中自行导入节点/订阅。
 
 ---
