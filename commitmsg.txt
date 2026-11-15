@@ -1,0 +1,10 @@
+构建：OpenWrt 源码分支升级到 v25.12.6
+
+- workflow：REPO_BRANCH v25.12.2 -> v25.12.6
+- .config：CONFIG_VERSION_NUMBER / CONFIG_VERSION_CODE / CONFIG_VERSION_REPO 同步为 25.12.6
+  （VERSION_REPO 若不同步，设备上 apk 会按 25.12.2 的 feeds 装包，与 6.12.112 内核不匹配）
+- README：固件版本与构建流程描述同步更新
+
+升级前已在 v25.12.6 源码树核验 diy-part1/diy-part2 的补丁锚点仍然有效：
+cetron_ct3003 设备定义、config_generate 的时区/内网IP/IPv6 判断、
+luci collections 的 luci-theme-bootstrap 依赖均未变化。

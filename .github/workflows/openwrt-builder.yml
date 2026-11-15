@@ -1,5 +1,5 @@
 #
-# Build OpenWrt (official source, v25.12.2) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003 (U-Boot layout)
+# Build OpenWrt (official source, v25.12.6) for CMCC RAX3000M / Qihoo 360T7 / Cetron CT3003 (U-Boot layout)
 # Target: mediatek/filogic (MT7981B)
 # Features: IPv4-only / Vantage theme / PassWall2 / SQM / DDNS / WOL / nlbwmon / UPnP / WireGuard
 #
@@ -11,7 +11,7 @@ permissions:
   actions: write
 env:
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: v25.12.2
+  REPO_BRANCH: v25.12.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh

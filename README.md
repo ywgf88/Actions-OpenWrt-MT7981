@@ -4,7 +4,7 @@
 
 **CMCC RAX3000M**、**Qihoo 360T7** 与 **Cetron CT3003**
 
-固件源码为 OpenWrt 官方仓库，分支 **v25.12.2**；预置 PassWall2 与 Vantage 主题，IPv4 单栈。
+固件源码为 OpenWrt 官方仓库，分支 **v25.12.6**；预置 PassWall2 与 Vantage 主题，IPv4 单栈。
 
 ---
 
@@ -12,7 +12,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 固件版本 | OpenWrt **v25.12.2**（官方源码 `openwrt/openwrt`，分支 `v25.12.2`） |
+| 固件版本 | OpenWrt **v25.12.6**（官方源码 `openwrt/openwrt`，分支 `v25.12.6`） |
 | 芯片平台 | MediaTek Filogic **MT7981B**（`mediatek/filogic`） |
 | 设备 1 | **CMCC RAX3000M**（中国移动 RAX3000M，目标名 `cmcc_rax3000m`） |
 | 设备 2 | **Qihoo 360T7**（奇虎 360 T7，目标名 `qihoo_360t7`） |
@@ -94,7 +94,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 2. 点击 **Run workflow**，选择 `main` 分支后确认；
 3. 等待构建完成（首次全量编译耗时较长，通常在 1～3 小时）。
 
-构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.2`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 上传产物。
+构建流程依次为：检出配置 → 拉取 OpenWrt 源码（`v25.12.6`）→ 载入自定义 feeds → `feeds update -a` → `feeds install -a` → 载入 `.config` 并执行 `diy-part2.sh` → **校验目标设备是否被正确选中** → 下载软件包 → 编译 → 上传产物。
 
 其中 `Validate target config` 一步会强制检查三款设备是否都出现在最终 `.config` 中；若某一款被 `make defconfig` 丢弃，构建会立即失败并在日志中提示，避免产出缺设备的"半成品"。为防这种静默丢弃，该步骤会先把 `.config` 的换行符统一为 LF，执行一次 `make defconfig`，然后检查三款设备的 `DEVICE_` 符号，发现哪个被丢弃就直接补写回 `.config`，再重新 `make defconfig` 解析一次，最后用 grep 硬校验。
 
