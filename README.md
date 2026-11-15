@@ -176,6 +176,32 @@ ubirename /dev/ubi0 fit kernel kernel fit
 - 当前系统正在跑的 `/rom` 是 ubiblock 按**卷 ID** 绑定的，换名不影响当次运行，重启后才按新名字找镜像；
 - 换名后不再需要那个 `kernel` 卷，确认新固件稳定后可回收空间：`ubirmvol /dev/ubi0 -N kernel`（约 25.9 MiB）。
 
+### 以后升级：LuCI 里点一下（依赖 `diy-part2.sh` 第 6 条补丁）
+
+`diy-part2.sh` 第 6 条会改写源码里的 `target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh`：把原来的 `platform_do_upgrade` 改名，再在文件末尾追加一个只对 `cetron,ct3003-ubootmod` 生效的版本 —— 先按默认路径把 FIT 写进 `kernel` 卷（该卷未被挂载，不会 `Resource busy`，容量由脚本按镜像实际大小重建），写完自动 `ubirename` 互换 `fit` / `kernel` 两个卷名，然后照常恢复配置并重启。于是升级变回标准流程：
+
+**LuCI**：系统 → 备份/刷机固件 → 选 `...-squashfs-sysupgrade.itb` → 勾选「保留配置并保留当前配置」、取消勾选「强制刷写」→ 刷写 → 自动重启一次，直接进新版本。
+
+**SSH**（等价，一条命令）：
+
+```sh
+sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgrade.itb
+```
+
+| LuCI 选项 | 怎么选 | 对应参数 |
+| --- | --- | --- |
+| 「保留配置并保留当前配置」 | **勾上** | 勾上不加 `-n`；默认未勾，等于 `-n`（清空配置） |
+| 「强制刷写」 | **取消勾选** | `--force`；只在校验失败且确认镜像对版时才勾 |
+| 固件文件 | 只能选 `...-squashfs-sysupgrade.itb` | 别选 `...-initramfs-recovery.itb` |
+
+补丁生效的前提是**设备上跑的是带该补丁的固件**：`platform.sh` 属于运行系统的一部分，所以当前这台（用旧逻辑刷进来的）下次仍要走上面的做法一或做法二；等装上带补丁的那一版之后，才变成"点一下就完"。
+
+三点提醒：
+
+1. 补丁尚未在实机跑过一次完整升级（只在 v25.12.6 源码树上验证了语法与幂等性），首次使用前先 `sysupgrade -b /tmp/cfg.tar.gz` 备份配置；
+2. 任何一次 `sysupgrade` 都会重建 `rootfs_data`，配置靠 `/tmp/sysupgrade.tgz` 恢复；真出问题会由 `recovery` 卷自动兜底引导，不会变砖；
+3. 若日后 `DEVICE_COMPAT_VERSION` 变化，LuCI 会禁用「保留配置」并提示布局变化，那一次只能用 `-n`。
+
 ### 实机验证记录
 
 | 项目 | 值 |
@@ -185,6 +211,7 @@ ubirename /dev/ubi0 fit kernel kernel fit
 | 完成方式 | `sysupgrade -n` 写入后镜像落在 `kernel` 卷，通过 `ubirename` 互换卷名完成引导 |
 | `fit` 卷 | 248 LEBs（31 490 048 B），容纳 31 429 203 B 的镜像 |
 | 验证项 | ttyd 1.7.7 / dawn 2025.11.07 / wifischedule 1.1.0 / zerotier 1.16.2 均已安装；radio0（2.4G HE20）与 radio1（5G HE80）正常 up |
+| 升级补丁 | `diy-part2.sh` 第 6 条（覆盖 `platform_do_upgrade`）；已在 v25.12.6 源码树上验证语法与幂等性，待装上该固件后首次实机升级验证 |
 
 ---
 
@@ -195,14 +222,14 @@ ubirename /dev/ubi0 fit kernel kernel fit
 │   └── openwrt-builder.yml   # 唯一工作流：编译、发布 Release
 ├── .config                    # 编译配置：目标设备、插件、主题、版本信息
 ├── diy-part1.sh               # feeds 更新前执行：加 PassWall2 与 Vantage 源
-├── diy-part2.sh               # feeds 安装后执行：改默认主题、时区、IPv4 单栈
+├── diy-part2.sh               # feeds 安装后执行：改默认主题、时区、IPv4 单栈、CT3003 升级路径
 └── README.md
 ```
 
 两个 diy 脚本的分工很关键：
 
 - **diy-part1.sh**（`feeds update/install` 之前）：向 `feeds.conf.default` 追加 PassWall2 的两个源，并把 Vantage 主题源码直接 `clone` 进 `package/`。因为官方 feed 里既没有 `xray-core` 这类依赖，也没有 Vantage 主题。
-- **diy-part2.sh**（`feeds install` 之后）：把 LuCI 集合包里的 `luci-theme-bootstrap` 依赖替换成 `luci-theme-vantage`；把默认时区从 `GMT0` 改成 `CST-8`；通过屏蔽 `/proc/sys/net/ipv6` 判断让 `config_generate` 完全不生成 IPv6 配置。
+- **diy-part2.sh**（`feeds install` 之后）：把 LuCI 集合包里的 `luci-theme-bootstrap` 依赖替换成 `luci-theme-vantage`；把默认时区从 `GMT0` 改成 `CST-8`；通过屏蔽 `/proc/sys/net/ipv6` 判断让 `config_generate` 完全不生成 IPv6 配置；把 CT3003 换成 ubootmod/FIT 设备定义；改写 `platform.sh` 修正 CT3003 的升级路径（详见「CT3003 升级」一节）。
 
 ---
 
