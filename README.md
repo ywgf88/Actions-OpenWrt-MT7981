@@ -16,7 +16,7 @@
 | 芯片平台 | MediaTek Filogic **MT7981B**（`mediatek/filogic`） |
 | 设备 1 | **CMCC RAX3000M**（中国移动 RAX3000M，目标名 `cmcc_rax3000m`） |
 | 设备 2 | **Qihoo 360T7**（奇虎 360 T7，目标名 `qihoo_360t7`） |
-| 设备 3 | **Cetron CT3003**（目标名 `cetron_ct3003`，DTS `mt7981b-cetron-ct3003`，NAND + UBINIZE 布局） |
+| 设备 3 | **Cetron CT3003**（目标名 `cetron_ct3003`，DTS `mt7981b-cetron-ct3003-ubootmod`，OpenWrt U-Boot / FIT 布局，产物为 `.itb`） |
 | 编译方式 | 一次构建同时产出三款设备的固件（`CONFIG_TARGET_MULTI_PROFILE=y`） |
 | 运行环境 | GitHub Actions `ubuntu-22.04`，单次构建超时上限 360 分钟 |
 
@@ -69,7 +69,7 @@
 
 | 项目 | 默认值 |
 | --- | --- |
-| **默认 IP 地址** | **`192.168.1.1`**（DHCP 网段同源，LAN 网关） |
+| **默认 IP 地址** | **`192.168.6.1`**（由 `diy-part2.sh` 改写 `config_generate` 得到，DHCP 网段同源，LAN 网关） |
 | 默认登录 | 用户名 `root`，密码为空（首次登录请立即设置） |
 | **默认主题** | **Vantage**（已剔除 `luci-theme-bootstrap` 依赖） |
 | 界面语言 | 简体中文 |
@@ -78,7 +78,7 @@
 
 **想把默认 IP 改成别的网段**（例如 `192.168.100.1`）：
 
-编辑 `diy-part2.sh`，取消第 3 条的注释并改数字，重新触发构建即可：
+编辑 `diy-part2.sh` 第 3 条即可——它现在已经把 `config_generate` 里的 `192.168.1.1` 全局替换成 `192.168.6.1`，把这行的两个数字改成你要的网段，重新触发构建：
 
 ```bash
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
@@ -105,13 +105,13 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 ## 产物与 Release
 
 - **固件位置**：`bin/targets/mediatek/filogic/`
-- **文件名**：`*squashfs-sysupgrade.itb` 或 `*squashfs-sysupgrade.bin`（依设备而定；三者均为 `sysupgrade-tar` 打包）
-- **CT3003 额外产物**：`*.factory.bin`（带 `cetron-header rd30 CT3003` 头，用于从原厂固件首次刷入）
+- **文件名**：`*squashfs-sysupgrade.itb`（三款设备统一为 FIT 打包，不再有 `.bin`；RAX3000M 的 eMMC 变体产物会被构建脚本剔除）
+- **CT3003 不产出 `factory.bin`**：上游 `cetron_ct3003` 定义里的 `factory.bin`（`cetron-header rd30 CT3003` 头）是给**原厂 U-Boot + stock 分区布局**用的，本仓库把该设备整块替换成了 OpenWrt U-Boot / FIT 布局（128 MB `ubi` 卷 `fit`、`root=/dev/fit0`），与 OEM 恢复流程写入的 stock 布局不兼容。把 `.itb` 包上 cetron 头虽然能通过 OEM 的头校验，但刷进去起不来，属危险产物，因此不生成。
 - **Release 命名**：`年.月.日-时分`（例：`2026.11.08-1530`）
 - **Release 保留策略**：只保留最新 **3** 个，更早的 tag 与附件自动删除
 - **Artifacts**：同时上传完整固件目录，便于不发布 Release 时也能下载
 
-构建成功后，请到 **Releases** 页面下载对应自己设备的 `sysupgrade` 文件；CT3003 首次从原厂固件迁移时用 `factory.bin`。
+构建成功后，请到 **Releases** 页面下载对应自己设备的 `sysupgrade.itb`；CT3003 需先由 OpenWrt U-Boot（ubootmod）写入该 `.itb`，本仓库不提供原厂固件首刷包。
 
 ---
 
@@ -150,7 +150,7 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 
 - 本仓库只负责**编译**固件，不提供刷机包适配与救砖服务，刷机有风险。
 - 升级建议走 LuCI 的「系统 → 备份与升级」，用 `sysupgrade` 文件，**不要**保留旧配置跨大版本升级（尤其是从带 IPv6 的固件切到本 IPv4 单栈固件）。
-- **CT3003** 从原厂固件迁移时用 `factory.bin`；之后升级与其他两款设备一样用 `sysupgrade`。
+- **CT3003** 已是 OpenWrt U-Boot / FIT 布局，升级与其他两款设备一样用 `sysupgrade.itb`；本仓库不产出原厂固件首刷用的 `factory.bin`。
 - 首次进入系统后请立刻到「系统 → 管理权」设置 root 密码，并在 PassWall2 中自行导入节点/订阅。
 
 ---

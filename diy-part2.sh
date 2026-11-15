@@ -18,6 +18,9 @@ sed -i 's|\[ -e /proc/sys/net/ipv6 \]|[ -e /proc/sys/net/ipv6-disabled ]|g' pack
 #    目的：用户机器已刷只认 itb 的新 uboot，产物要与 rax3000m / 360t7 一样是 sysupgrade.itb
 #    做法照 ImmortalWrt 的 cetron_ct3003-ubootmod：新增 ubootmod 专用 DTS（ubi 铺满 flash、内核放 fit 卷），
 #    并在 filogic.mk 里加一个独立的设备定义（原 stock 定义保持不动，互不影响）
+#    注意：这里刻意不生成 factory.bin。上游 cetron_ct3003 的 factory.bin 带 cetron-header(rd30) 头，
+#    是给「原厂 U-Boot + stock 布局」刷入用的；本设备的 FIT + 128M ubi("fit") 布局与之不兼容，
+#    把 sysupgrade.itb 包上 cetron 头虽然能通过 OEM 的头校验，但刷进去起不来，属危险产物。
 BASE="$(cd "$(dirname "$0")" && pwd)"
 DTS_DIR=target/linux/mediatek/dts
 MK=target/linux/mediatek/image/filogic.mk
