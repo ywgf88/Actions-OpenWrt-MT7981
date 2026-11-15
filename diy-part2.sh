@@ -52,71 +52,44 @@ echo "CT3003 已切换为 ubootmod/FIT(itb) 定义（设备名保持 cetron_ct30
 # 6. CT3003 升级路径修正
 #    现象：在运行系统里 sysupgrade，新镜像写进去了，重启后版本却没变。
 #    原因：本布局的 U-Boot（ubi_read_production=ubi read $loadaddr fit）和内核
-#          （root=/dev/fit0）都只按卷名 "fit" 取镜像；而 nand.sh 里
-#          CI_KERNPART="${CI_KERNPART:-kernel}"，上游 filogic 的 platform.sh 只给
-#          unielec,u7981-01* 设过 CI_KERNPART="fit"，本设备掉进默认分支，
-#          于是整个 FIT 被写进名为 kernel 的卷，引导根本不读它。
-#    做法：把原 platform_do_upgrade 改名为 _platform_do_upgrade，再在文件末尾追加
-#          一个只针对 cetron,ct3003-ubootmod 的覆盖函数：
-#          ① 仍按默认路径把 FIT 写进 kernel 卷——该卷此时未被挂载，不会 EBUSY，
-#             且 nand.sh 会删掉旧卷后按镜像实际大小重建，容量永不受限；
-#          ② 写完后用 ubirename 原子互换 fit / kernel 两个卷名（只改名不动数据）；
-#          ③ 照常恢复配置并重启，重启后 U-Boot 读到的 fit 卷即为新镜像。
-#          另外两款设备不受影响，仍走原函数。
+#          （root=/dev/fit0）都只按卷名 "fit" 取镜像；而 nand.sh 第 7 行是
+#          CI_KERNPART="${CI_KERNPART:-kernel}"，只有走 fit_do_upgrade 的设备才会
+#          把真实卷名交上去。上游 platform.sh 的设备列表里没有
+#          cetron,ct3003-ubootmod（这是我们自己加的），于是掉进末尾默认分支，
+#          整个 FIT 被写进名为 kernel 的卷，引导根本不读它。
+#          （上游的 cmcc,rax3000m、qihoo,360t7、qihoo,360t7-ubi 本来就在
+#            fit_do_upgrade 那组里，所以它们从来没有这个毛病。）
+#    做法：不复制任何升级逻辑，只把本设备并入上游那组 FIT 设备：
+#          在 platform_do_upgrade 的 case 里加一条
+#              cetron,ct3003-ubootmod)  fit_do_upgrade "$1"  ;;
+#          上游 fit_do_upgrade（fitblk 包的 /lib/upgrade/fit.sh）自己会：
+#            ① 读设备树 chosen/rootdisk 指向的 UBI 卷，把 volname（本设备为 fit）
+#               导出成 CI_KERNPART —— 这两项在我们自己那份 DTS 里已经写好；
+#            ② 先 fitblk /dev/fit0 释放块设备，再删卷（解决 Resource busy）；
+#            ③ 删 fit 与 rootfs_data，按镜像实际长度重建 fit，剩余空间全给
+#              rootfs_data，写入 FIT，恢复配置并重启。
+#          镜像里已装 fitblk 包（/usr/sbin/fitblk + /lib/upgrade/fit.sh），
+#          platform.sh 的 RAMFS_COPY_BIN 也带了 fitblk，无需额外改动。
 UPG=target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-if [ -f "$UPG" ] && ! grep -q '_platform_do_upgrade()' "$UPG"; then
-  sed -i 's/^platform_do_upgrade() {/_platform_do_upgrade() {/' "$UPG"
-  cat >> "$UPG" <<'PLATFORM_EOF'
-
-# --- Actions-OpenWrt-MT7981 ---
-# cetron_ct3003（自建 ubootmod 布局）专用升级路径，详见仓库 diy-part2.sh 第 6 条。
-platform_do_upgrade() {
-	if [ "$(board_name)" != "cetron,ct3003-ubootmod" ]; then
-		_platform_do_upgrade "$@"
-		return $?
-	fi
-
-	local file="$1"
-	local cmd="$(identify_if_gzip "$file")cat"
-
-	if [ "$(identify "$file" "$cmd" "")" != "fit" ]; then
-		nand_do_upgrade "$file"
-		return $?
-	fi
-
-	local ubidev="$(nand_find_ubi "${CI_KERN_UBIPART:-ubi}")"
-	local kernvol="$(nand_find_volume "$ubidev" kernel)"
-	local lebsz="$(cat "/sys/class/ubi/$ubidev/eraseblock_size" 2>/dev/null)"
-	local avail="$(cat "/sys/class/ubi/$ubidev/avail_eraseblocks" 2>/dev/null)"
-
-	# 预检：把就地删除的 kernel 卷也算进可用空间，避免删完 rootfs_data 才发现放不下
-	if [ -n "$lebsz" ] && [ -n "$avail" ]; then
-		local need=$(( ($cmd < "$file" | wc -c) / lebsz + 1 ))
-		[ -n "$kernvol" ] && avail=$(( avail + $(cat "/sys/class/ubi/$kernvol/reserved_ebs" 2>/dev/null || echo 0) ))
-		if [ "$avail" -lt "$need" ]; then
-			echo "not enough free UBI space for a kernel volume (need $need LEBs, have $avail)."
-			echo "please upgrade from U-Boot bootmenu_4 (TFTP) instead."
-			nand_do_upgrade_failed
-			return 1
-		fi
-	fi
-
-	CI_KERNPART="kernel"
-	nand_verify_if_gzip_file "$file" "$cmd" || nand_do_upgrade_failed
-	nand_upgrade_fit "$file" "$cmd" || nand_do_upgrade_failed
-
-	if ! ubirename /dev/$ubidev fit kernel kernel fit; then
-		echo "cannot swap fit/kernel UBI volume names"
-		nand_do_upgrade_failed
-	fi
-
-	nand_do_upgrade_success
-}
-PLATFORM_EOF
+if [ -f "$UPG" ] && ! grep -q 'cetron,ct3003-ubootmod)' "$UPG"; then
+  awk '
+    /^platform_do_upgrade\(\) \{/ { in_func = 1 }
+    in_func && !done && /^[[:blank:]]*case "\$board" in/ {
+      print
+      print "\tcetron,ct3003-ubootmod)"
+      print "\t\tfit_do_upgrade \"$1\""
+      print "\t\t;;"
+      done = 1
+      next
+    }
+    { print }
+    END { if (!done) { print "ERROR: platform.sh 结构不符，未找到 case \"$board\" in" > "/dev/stderr"; exit 4 } }
+  ' "$UPG" > "$UPG.new" && mv "$UPG.new" "$UPG" || exit 1
 fi
 
-grep -q '_platform_do_upgrade()' "$UPG" 2>/dev/null || { echo "ERROR: platform.sh 改造失败（未找到 _platform_do_upgrade）"; exit 1; }
-grep -q 'cetron,ct3003-ubootmod' "$UPG" 2>/dev/null || { echo "ERROR: platform.sh 改造失败（缺少 cetron 分支）"; exit 1; }
-echo "CT3003 升级路径已修正：写入 kernel 卷后自动互换 fit/kernel 卷名再重启"
+grep -q 'cetron,ct3003-ubootmod)' "$UPG" || { echo "ERROR: platform.sh 改造失败（缺少 cetron 分支）"; exit 1; }
+grep -A1 'cetron,ct3003-ubootmod)' "$UPG" | grep -q 'fit_do_upgrade' || { echo "ERROR: cetron 分支未指向 fit_do_upgrade"; exit 1; }
+bash -n "$UPG" || { echo "ERROR: platform.sh 语法检查失败"; exit 1; }
+echo "CT3003 升级路径已修正：并入上游 fit_do_upgrade 分支（自动取 fit 卷名并释放 fitblk）"
 
 echo "diy-part2 done."

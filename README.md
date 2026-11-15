@@ -131,7 +131,9 @@ CT3003 的 DTS（`mt7981b-cetron-ct3003-ubootmod`）把 128 MB 的 `ubi` 分区�
 
 ### 坑在哪
 
-在运行系统里直接 `sysupgrade`，整个 FIT 会被写进名为 **`kernel`** 的卷（旧装机残留的卷名），而引导只读 `fit` —— 于是**刷完重启，版本一点没变**，`/etc/openwrt_release` 和 `uname -a` 还是旧的。
+在运行系统里直接 `sysupgrade`，由于本设备不在上游 `platform.sh` 的任何设备列表里、掉进末尾的默认分支，而 `nand.sh` 的 `CI_KERNPART` 默认值是 `kernel` —— 整个 FIT 会被写进一个**名为 `kernel` 的卷**，引导只读 `fit`，于是**刷完重启，版本一点没变**，`/etc/openwrt_release` 和 `uname -a` 还是旧的。
+
+（对照：上游的 `cmcc,rax3000m`、`qihoo,360t7`、`qihoo,360t7-ubi` 走的是 `fit_do_upgrade`，卷名由设备树里的 `chosen/rootdisk` 决定，所以 RAX3000M 与 360T7 从来没有这个毛病。根因与修法见下面「以后升级」一节。）
 
 同时，若 `fit` 卷偏小（首次实测为 214 LEBs = 25.9 MiB，而 v25.12.6 镜像 30.0 MiB），卷容量也塞不下，且**无法在运行系统里扩容**：`fit` 被 ubiblock 映射挂载为 `/rom`、`rootfs_data` 正在作 overlay，对它们执行 `ubirsvol` 一律返回 `error 16 (Resource busy)`；`available LEBs = 0` 也没有空隙可分。
 
@@ -178,7 +180,13 @@ ubirename /dev/ubi0 fit kernel kernel fit
 
 ### 以后升级：LuCI 里点一下（依赖 `diy-part2.sh` 第 6 条补丁）
 
-`diy-part2.sh` 第 6 条会改写源码里的 `target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh`：把原来的 `platform_do_upgrade` 改名，再在文件末尾追加一个只对 `cetron,ct3003-ubootmod` 生效的版本 —— 先按默认路径把 FIT 写进 `kernel` 卷（该卷未被挂载，不会 `Resource busy`，容量由脚本按镜像实际大小重建），写完自动 `ubirename` 互换 `fit` / `kernel` 两个卷名，然后照常恢复配置并重启。于是升级变回标准流程：
+`diy-part2.sh` 第 6 条只做一件事：在源码 `target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh` 的 `platform_do_upgrade` 里，把 `cetron,ct3003-ubootmod` 归入上游那组 FIT 设备（`fit_do_upgrade "$1"`）。上游这个函数（来自 `fitblk` 包的 `/lib/upgrade/fit.sh`）会：
+
+1. 读设备树 `chosen/rootdisk` 指向的 UBI 卷，把它的 `volname`（本设备是 `fit`）导出成 `CI_KERNPART`；
+2. 先 `fitblk /dev/fit0` 释放块设备，让该卷可以被删掉、重建；
+3. 删掉 `fit` 与 `rootfs_data`，按新镜像实际长度重建 `fit`、剩余空间全部留给 `rootfs_data`，写入 FIT，恢复配置并重启。
+
+所以升级回到标准动作，**不需要 `kernel` 卷、也不需要 `ubirename`**。上游的 `cmcc,rax3000m`、`qihoo,360t7`、`qihoo,360t7-ubi` 本来就在这个列表里——RAX3000M 和 360T7 从来没有这个毛病。
 
 **LuCI**：系统 → 备份/刷机固件 → 选 `...-squashfs-sysupgrade.itb` → 勾选「保留配置并保留当前配置」、取消勾选「强制刷写」→ 刷写 → 自动重启一次，直接进新版本。
 
@@ -196,11 +204,12 @@ sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgra
 
 补丁生效的前提是**设备上跑的是带该补丁的固件**：`platform.sh` 属于运行系统的一部分，所以当前这台（用旧逻辑刷进来的）下次仍要走上面的做法一或做法二；等装上带补丁的那一版之后，才变成"点一下就完"。
 
-三点提醒：
+四点提醒：
 
-1. 补丁尚未在实机跑过一次完整升级（只在 v25.12.6 源码树上验证了语法与幂等性），首次使用前先 `sysupgrade -b /tmp/cfg.tar.gz` 备份配置；
+1. 补丁尚未在实机跑过一次完整升级（只在 v25.12.6 源码树上验证了可应用、幂等与 `bash -n` 语法），首次使用前先 `sysupgrade -b /tmp/cfg.tar.gz` 备份配置；
 2. 任何一次 `sysupgrade` 都会重建 `rootfs_data`，配置靠 `/tmp/sysupgrade.tgz` 恢复；真出问题会由 `recovery` 卷自动兜底引导，不会变砖；
-3. 若日后 `DEVICE_COMPAT_VERSION` 变化，LuCI 会禁用「保留配置」并提示布局变化，那一次只能用 `-n`。
+3. 若日后 `DEVICE_COMPAT_VERSION` 变化，LuCI 会禁用「保留配置」并提示布局变化，那一次只能用 `-n`；
+4. 设备上如果还留着上次救急用的 `kernel` 卷（214 LEBs，装着 25.12.2 旧镜像），确认新固件稳定后可回收空间：`ubirmvol /dev/ubi0 -N kernel`（约 25.9 MiB）；不删也能用，只是白占。
 
 ### 实机验证记录
 
@@ -211,7 +220,7 @@ sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgra
 | 完成方式 | `sysupgrade -n` 写入后镜像落在 `kernel` 卷，通过 `ubirename` 互换卷名完成引导 |
 | `fit` 卷 | 248 LEBs（31 490 048 B），容纳 31 429 203 B 的镜像 |
 | 验证项 | ttyd 1.7.7 / dawn 2025.11.07 / wifischedule 1.1.0 / zerotier 1.16.2 均已安装；radio0（2.4G HE20）与 radio1（5G HE80）正常 up |
-| 升级补丁 | `diy-part2.sh` 第 6 条（覆盖 `platform_do_upgrade`）；已在 v25.12.6 源码树上验证语法与幂等性，待装上该固件后首次实机升级验证 |
+| 升级补丁 | `diy-part2.sh` 第 6 条：把 `cetron,ct3003-ubootmod` 并入上游 `fit_do_upgrade` 列表（只加 3 行）。已在 v25.12.6 源码树上验证可应用 / 幂等 / `bash -n`；镜像内已装 `fitblk` 包（含 `/lib/upgrade/fit.sh`），DTS 已带 `chosen/rootdisk` 与 `volname="fit"`，待装上该固件后首次实机升级验证 |
 
 ---
 
