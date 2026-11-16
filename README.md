@@ -316,7 +316,7 @@ ubirmvol /dev/ubi0 -N kernel     # 约 30 MiB（248 LEBs）
 cat /tmp/sysinfo/board_name     # cmcc,rax3000m / qihoo,360t7 / qihoo,360t7-ubi
 ```
 
-进 Recovery 的依据：产物里若只有 `.itb` 没有 `-recovery.itb`，说明打包失败，不要刷。
+进 Recovery 的依据：产物里必须有 `<profile>-squashfs-sysupgrade.itb`（RAX3000M 约 15 MB、360T7 约 14 MB），外加 `bl31-uboot.fip` / `preloader.bin`（RAX3000M 还多一套 emmc/nand 变体和 `gpt.bin`）。ImageBuilder 本来就不产 `-initramfs-recovery.itb`，没有它不是打包失败；缺 `sysupgrade.itb` 或体积明显偏小才算失败，别刷。
 
 ---
 
