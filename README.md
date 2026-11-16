@@ -206,7 +206,7 @@ sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgra
 
 四点提醒：
 
-1. 补丁尚未在实机跑过一次完整升级（只在 v25.12.6 源码树上验证了可应用、幂等与 `bash -n` 语法），首次使用前先 `sysupgrade -b /tmp/cfg.tar.gz` 备份配置；
+1. 升级前先 `sysupgrade -b /tmp/cfg.tar.gz` 备份配置（补丁已在实机跑过完整升级，但每次都会重建 `rootfs_data`，备份是唯一兜底）；
 2. 任何一次 `sysupgrade` 都会重建 `rootfs_data`，配置靠 `/tmp/sysupgrade.tgz` 恢复；真出问题会由 `recovery` 卷自动兜底引导，不会变砖；
 3. 若日后 `DEVICE_COMPAT_VERSION` 变化，LuCI 会禁用「保留配置」并提示布局变化，那一次只能用 `-n`；
 4. 设备上如果还留着上次救急用的 `kernel` 卷（214 LEBs，装着 25.12.2 旧镜像），确认新固件稳定后可回收空间：`ubirmvol /dev/ubi0 -N kernel`（约 25.9 MiB）；不删也能用，只是白占。
@@ -282,6 +282,9 @@ ubirmvol /dev/ubi0 -N kernel     # 约 30 MiB（248 LEBs）
 | 补丁版固件 | Release `2026.11.16-0054`（commit `926de3a`）；`sysupgrade --ignore-minor-compat-version` 后 `ubirename` 换名，引导成功 |
 | 取卷名预演 | `volname=fit ubipart=ubi method=ubi`，与 `fit_do_upgrade` 内部 `export_fitblk_bootdev()` 的解析结果一致 |
 | `compat_version` | 运行系统已写入 `1.2`，后续 LuCI 勾「保留配置」不再被次版本校验拦截 |
+| 一键升级实测 | 2026-11-16 在 LuCI 里勾「保留配置」刷同一份 `2026.11.16-0054`：**只重启一次**，`REVISION` 不变（同一镜像），`compat_version=1.2` 原样保留 |
+| 卷重建证据 | `rootfs_data` 从 `/dev/ubi0_5` 变为 `/dev/ubi0_1`（说明该卷被删除重建），overlay 由 35.2M 涨到 62.9M（回收出的 248 LEBs 空池全并入） |
+| 空间回收 | `ubirmvol /dev/ubi0 -N kernel` 后卷数 6→5、available 回到 0、无 `kernel` 卷残留 |
 
 ---
 
