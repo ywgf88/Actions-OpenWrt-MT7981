@@ -211,6 +211,64 @@ sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgra
 3. 若日后 `DEVICE_COMPAT_VERSION` 变化，LuCI 会禁用「保留配置」并提示布局变化，那一次只能用 `-n`；
 4. 设备上如果还留着上次救急用的 `kernel` 卷（214 LEBs，装着 25.12.2 旧镜像），确认新固件稳定后可回收空间：`ubirmvol /dev/ubi0 -N kernel`（约 25.9 MiB）；不删也能用，只是白占。
 
+### 装好之后的验收清单
+
+带补丁的这一版刷进去后（第一次仍要 `sysupgrade` + `ubirename`，见上），逐条核对：
+
+| # | 命令 | 期望 |
+| --- | --- | --- |
+| 1 | `cat /etc/openwrt_release` | `DISTRIB_RELEASE='25.12.6'`、`DISTRIB_REVISION='r33311-981c978eff'` |
+| 2 | `grep -c 'cetron,ct3003-ubootmod)' /lib/upgrade/platform.sh` | `1` —— 补丁确实在固件里 |
+| 3 | `ls /sys/firmware/devicetree/base/chosen/rootdisk` | 文件存在 |
+| 4 | `ubinfo -a` | `fit` 卷为 248 LEBs |
+| 5 | 下面的"取卷名预演"脚本 | `volname=fit ubipart=ubi method=ubi` |
+
+第 2 条是唯一能区分新旧固件的判据 —— 两个镜像的内核号都是 6.12.112，`uname -a` 看不出来。
+
+第 5 条最关键：它复刻 `fit_do_upgrade` 内部 `export_fitblk_bootdev()` 的查找过程，输出正确就说明下次一键升级能拿到对卷名。
+
+```sh
+sh -c '
+rootdisk="$(cat /sys/firmware/devicetree/base/chosen/rootdisk)"
+for h in /sys/class/mtd/mtd*/of_node/volumes/*/phandle; do
+  [ -e "$h" ] || continue
+  if [ "$rootdisk" = "$(cat "$h")" ]; then
+    echo "volname=$(cat "${h%/phandle}/volname") ubipart=$(cat "${h%%/of_node*}/name") method=ubi"
+    exit 0
+  fi
+done
+echo "no match"'
+```
+
+然后补一条配置，把运行系统的布局版本记成 1.2：
+
+```sh
+uci set system.@system[0].compat_version='1.2'
+uci commit system
+```
+
+> **为什么必须记**：`/lib/upgrade/fwtool.sh` 做题图比较时读的是 `uci get system.@system[0].compat_version`，读不到就按 **1.0** 算；而新镜像带的是 `DEVICE_COMPAT_VERSION := 1.2`（`dts/ct3003-ubootmod-body.mk`）。大版本相同、只差次版本时，sysupgrade 只允许"不保留配置"刷，表现就是：
+>
+> ```
+> The device is supported, but the config is incompatible to the new image (1.0->1.2).
+> Please upgrade without keeping config (sysupgrade -n).
+> Flash layout changes require bootloader update
+> Image check failed.
+> ```
+>
+> 首次刷带补丁的固件时一定会遇到（因为旧固件从不写这个字段）。两种处理方式：
+>
+> - **保留配置**（推荐，布局其实没变）：`sysupgrade --ignore-minor-compat-version /tmp/xxx.itb`。v25.12.6 起的 `sysupgrade` 自带该开关，只跳过次版本检查，大版本不同仍会拦；
+> - **干净刷**：`sysupgrade -n /tmp/xxx.itb`。配置会清空，先把备份拉到电脑上 —— `/tmp` 是内存，重启即失：`scp root@192.168.6.1:/tmp/cfg-ct3003.tar.gz .`
+>
+> 记下 `compat_version=1.2` 之后，后续升级直接勾「保留配置」就不会再被拦。
+
+最后：确认新固件稳定几天后回收旧卷，把空间还给 overlay：
+
+```sh
+ubirmvol /dev/ubi0 -N kernel     # 约 30 MiB（248 LEBs）
+```
+
 ### 实机验证记录
 
 | 项目 | 值 |
@@ -220,7 +278,10 @@ sysupgrade /tmp/openwrt-25.12.x-mediatek-filogic-cetron_ct3003-squashfs-sysupgra
 | 完成方式 | `sysupgrade -n` 写入后镜像落在 `kernel` 卷，通过 `ubirename` 互换卷名完成引导 |
 | `fit` 卷 | 248 LEBs（31 490 048 B），容纳 31 429 203 B 的镜像 |
 | 验证项 | ttyd 1.7.7 / dawn 2025.11.07 / wifischedule 1.1.0 / zerotier 1.16.2 均已安装；radio0（2.4G HE20）与 radio1（5G HE80）正常 up |
-| 升级补丁 | `diy-part2.sh` 第 6 条：把 `cetron,ct3003-ubootmod` 并入上游 `fit_do_upgrade` 列表（只加 3 行）。已在 v25.12.6 源码树上验证可应用 / 幂等 / `bash -n`；镜像内已装 `fitblk` 包（含 `/lib/upgrade/fit.sh`），DTS 已带 `chosen/rootdisk` 与 `volname="fit"`，待装上该固件后首次实机升级验证 |
+| 升级补丁 | `diy-part2.sh` 第 6 条：把 `cetron,ct3003-ubootmod` 并入上游 `fit_do_upgrade` 列表（只加 3 行） |
+| 补丁版固件 | Release `2026.11.16-0054`（commit `926de3a`）；`sysupgrade --ignore-minor-compat-version` 后 `ubirename` 换名，引导成功 |
+| 取卷名预演 | `volname=fit ubipart=ubi method=ubi`，与 `fit_do_upgrade` 内部 `export_fitblk_bootdev()` 的解析结果一致 |
+| `compat_version` | 运行系统已写入 `1.2`，后续 LuCI 勾「保留配置」不再被次版本校验拦截 |
 
 ---
 
