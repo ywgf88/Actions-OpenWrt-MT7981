@@ -296,16 +296,17 @@ ubirmvol /dev/ubi0 -N kernel     # 约 30 MiB（248 LEBs）
 | --- | --- |
 | 入口 | Actions → **ImageBuilder 快速试机** → Run workflow |
 | 可选 profile | `cmcc_rax3000m`、`qihoo_360t7`、`qihoo_360t7-ubi` |
-| 额外包 | `extra_packages` 输入框，空格分隔，例 `luci-app-homeproxy luci-i18n-homeproxy-zh-cn` |
+| 额外包 | `extra_packages` 输入框，空格分隔，例 `luci-app-sqm luci-i18n-sqm-zh-cn` |
 | 产物 | workflow artifact（`.itb` + 引导工件，保留 14 天），同时打印 SHA256 |
 | 默认值 | `imagebuilder/files/etc/uci-defaults/99-aom-defaults.sh`：时区 `CST-8`、LAN 改 `192.168.6.1`、IPv4 单栈 |
-| 默认包集 | luci + 中文语言包、ttyd、dawn、zerotier、wifischedule、openssh-sftp-server |
+| 默认包集 | luci + 中文语言包、ttyd、dawn、zerotier、wifischedule、openssh-sftp-server（25.12 的 luci 源里已没有 `luci-app-zerotier`，只装 `zerotier` 本体） |
 
 **它做不到的事**（所以 CT3003 不能走这条）：
 
 - 动不了 DTS、内核配置、`base-files`、`platform.sh` —— 布局和升级逻辑都在源码层，ImageBuilder 里根本没有；
 - 版本固定在 25.12.6，上游发新版要同时改 `TARGET_URL` 和 `IB_TARBALL` 两处；
-- 只能用官方仓库里已编好的包，自定义内核模块编不了。
+- 只能用官方仓库里已编好的包，自定义内核模块编不了；
+- 包只能来自 25.12.6 官方 release 源（`targets/.../kmods` + `base`/`luci`/`packages`/`routing`/`telephony`/`video` 六个 feed）。第三方包（homeproxy、argon 主题、OAF 等）不在里面，写进 `extra_packages` 会在组装步骤直接报 `unable to select packages: xxx (no such package)` 并失败（首跑失败就是这个原因：`luci-app-zerotier` 在 25.12 源里已不存在）。
 
 **什么时候用它**：想试"某个插件装上能不能跑"，或给 RAX3000M / 360T7 快速出一版先验证；确认好用后再改 `.config` 走正式构建（那套要 1.5 小时）。CT3003 永远走正式构建。
 
