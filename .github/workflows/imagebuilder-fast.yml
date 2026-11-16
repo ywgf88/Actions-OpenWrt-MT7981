@@ -11,6 +11,10 @@ name: ImageBuilder 快速试机
 #      刷错会起不来。设备上可先 `cat /tmp/sysinfo/board_name` 确认。
 #   4) 这只是试机镜像：与本仓库正式构建（源码编译 + 定制 .config）不等价，
 #      验证完插件能不能用，正式固件仍然走 openwrt-builder.yml。
+#   5) 软件包只能来自官方 release 源（target/kmods + base/luci/packages/routing/
+#      telephony/video 六个 feed）。第三方包（homeproxy、argon 主题、OAF 等）不在里面，
+#      写了会直接报 `unable to select packages: xxx (no such package)` 而失败。
+#      25.12 的 luci 源里已没有 luci-app-zerotier（只有 zerotier 本体）。
 
 on:
   workflow_dispatch:
@@ -25,7 +29,7 @@ on:
           - qihoo_360t7
           - qihoo_360t7-ubi
       extra_packages:
-        description: '额外软件包（空格分隔，可留空，例：luci-app-homeproxy luci-i18n-homeproxy-zh-cn）'
+        description: '额外软件包（空格分隔，可留空；只能填官方源里有的包，写错会在组装步骤直接报 no such package）'
         required: false
         default: ''
 
@@ -42,11 +46,12 @@ jobs:
       IB_TARBALL: 'openwrt-imagebuilder-25.12.6-mediatek-filogic.Linux-x86_64.tar.zst'
       IB_DIR: 'openwrt-imagebuilder-25.12.6-mediatek-filogic.Linux-x86_64'
       # 与本仓库固件尽量接近的默认包集；要加插件就用 extra_packages 输入
+      # 注意：这里的包都已在 25.12.6 官方源里核对过存在
       PKGS: >-
         luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn
         luci-app-ttyd luci-i18n-ttyd-zh-cn
         dawn luci-app-dawn luci-i18n-dawn-zh-cn
-        zerotier luci-app-zerotier
+        zerotier
         wifischedule luci-app-wifischedule luci-i18n-wifischedule-zh-cn
         openssh-sftp-server
     steps:
