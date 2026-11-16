@@ -71,7 +71,10 @@ echo "CT3003 已切换为 ubootmod/FIT(itb) 定义（设备名保持 cetron_ct30
 #          镜像里已装 fitblk 包（/usr/sbin/fitblk + /lib/upgrade/fit.sh），
 #          platform.sh 的 RAMFS_COPY_BIN 也带了 fitblk，无需额外改动。
 UPG=target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-if [ -f "$UPG" ] && ! grep -q 'cetron,ct3003-ubootmod)' "$UPG"; then
+# 上游一旦改路径（例如 25.12.7 / 26.x 调整 filogic 的 base-files 布局），补丁会被
+# 静默跳过 —— 构建照样成功，固件却没有补丁，又回到"刷完版本不变"。这里改成硬失败。
+[ -f "$UPG" ] || { echo "ERROR: 找不到 $UPG，platform.sh 路径可能已变动，升级补丁未应用" >&2; exit 1; }
+if ! grep -q 'cetron,ct3003-ubootmod)' "$UPG"; then
   awk '
     /^platform_do_upgrade\(\) \{/ { in_func = 1 }
     in_func && !done && /^[[:blank:]]*case "\$board" in/ {
