@@ -288,14 +288,47 @@ ubirmvol /dev/ubi0 -N kernel     # 约 30 MiB（248 LEBs）
 
 ---
 
+## 快速试机构建（ImageBuilder，几分钟一版）
+
+`imagebuilder-fast.yml` 用官方 ImageBuilder 拼镜像：**不编内核、不编软件包**，只做"解包 → 装已编好的二进制包 → 叠加 `files/` 覆盖层 → 打包"，一版几分钟（大头是下载 550 MB 的 imagebuilder 包）。
+
+| 项目 | 说明 |
+| --- | --- |
+| 入口 | Actions → **ImageBuilder 快速试机** → Run workflow |
+| 可选 profile | `cmcc_rax3000m`、`qihoo_360t7`、`qihoo_360t7-ubi` |
+| 额外包 | `extra_packages` 输入框，空格分隔，例 `luci-app-homeproxy luci-i18n-homeproxy-zh-cn` |
+| 产物 | workflow artifact（`.itb` + 引导工件，保留 14 天），同时打印 SHA256 |
+| 默认值 | `imagebuilder/files/etc/uci-defaults/99-aom-defaults.sh`：时区 `CST-8`、LAN 改 `192.168.6.1`、IPv4 单栈 |
+| 默认包集 | luci + 中文语言包、ttyd、dawn、zerotier、wifischedule、openssh-sftp-server |
+
+**它做不到的事**（所以 CT3003 不能走这条）：
+
+- 动不了 DTS、内核配置、`base-files`、`platform.sh` —— 布局和升级逻辑都在源码层，ImageBuilder 里根本没有；
+- 版本固定在 25.12.6，上游发新版要同时改 `TARGET_URL` 和 `IB_TARBALL` 两处；
+- 只能用官方仓库里已编好的包，自定义内核模块编不了。
+
+**什么时候用它**：想试"某个插件装上能不能跑"，或给 RAX3000M / 360T7 快速出一版先验证；确认好用后再改 `.config` 走正式构建（那套要 1.5 小时）。CT3003 永远走正式构建。
+
+刷之前先确认 profile 与设备布局一致，刷错会起不来：
+
+```sh
+cat /tmp/sysinfo/board_name     # cmcc,rax3000m / qihoo,360t7 / qihoo,360t7-ubi
+```
+
+进 Recovery 的依据：产物里若只有 `.itb` 没有 `-recovery.itb`，说明打包失败，不要刷。
+
+---
+
 ## 仓库结构
 
 ```
 ├── .github/workflows/
-│   └── openwrt-builder.yml   # 唯一工作流：编译、发布 Release
+│   ├── openwrt-builder.yml   # 正式构建：源码编译 + 发布 Release
+│   └── imagebuilder-fast.yml # 快速试机：只组装已有二进制，几分钟一版（CT3003 不适用）
 ├── .config                    # 编译配置：目标设备、插件、主题、版本信息
 ├── diy-part1.sh               # feeds 更新前执行：加 PassWall2 与 Vantage 源
 ├── diy-part2.sh               # feeds 安装后执行：改默认主题、时区、IPv4 单栈、CT3003 升级路径
+├── imagebuilder/files/        # 试机镜像的 files 覆盖层（uci-defaults 脚本）
 └── README.md
 ```
 

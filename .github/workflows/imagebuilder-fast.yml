@@ -1,0 +1,101 @@
+name: ImageBuilder 快速试机
+
+# 用途：用官方 ImageBuilder 在几分钟内拼一个 25.12.6 的试机镜像。
+#       它只"组装"（解包 + 装已编好的包 + 打包），不编译内核和软件包，所以很快。
+#
+# ⚠️ 限制（重要）：
+#   1) 只能改"装哪些包"和 files/ 覆盖层，改不了 DTS / 内核配置 / base-files / 升级脚本。
+#      所以本仓库的 CT3003（自建 ubootmod 布局 + fit_do_upgrade 补丁）绝对不能用这条路。
+#   2) 目前只列了 RAX3000M / 360T7 的 profile —— 这两台的布局在上游 25.12.6 里已原生支持。
+#   3) profile 必须与设备实际布局一致：360T7 有两种（qihoo_360t7 / qihoo_360t7-ubi），
+#      刷错会起不来。设备上可先 `cat /tmp/sysinfo/board_name` 确认。
+#   4) 这只是试机镜像：与本仓库正式构建（源码编译 + 定制 .config）不等价，
+#      验证完插件能不能用，正式固件仍然走 openwrt-builder.yml。
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: '设备 profile（务必与设备布局一致）'
+        required: true
+        type: choice
+        default: 'cmcc_rax3000m'
+        options:
+          - cmcc_rax3000m
+          - qihoo_360t7
+          - qihoo_360t7-ubi
+      extra_packages:
+        description: '额外软件包（空格分隔，可留空，例：luci-app-homeproxy luci-i18n-homeproxy-zh-cn）'
+        required: false
+        default: ''
+
+concurrency:
+  group: imagebuilder-${{ inputs.profile }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_URL: 'https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic'
+      IB_TARBALL: 'openwrt-imagebuilder-25.12.6-mediatek-filogic.Linux-x86_64.tar.zst'
+      IB_DIR: 'openwrt-imagebuilder-25.12.6-mediatek-filogic.Linux-x86_64'
+      # 与本仓库固件尽量接近的默认包集；要加插件就用 extra_packages 输入
+      PKGS: >-
+        luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn
+        luci-app-ttyd luci-i18n-ttyd-zh-cn
+        dawn luci-app-dawn luci-i18n-dawn-zh-cn
+        zerotier luci-app-zerotier
+        wifischedule luci-app-wifischedule luci-i18n-wifischedule-zh-cn
+        openssh-sftp-server
+    steps:
+      - name: 检出仓库（取 files/ 覆盖层）
+        uses: actions/checkout@v4
+
+      - name: 安装 ImageBuilder 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bzip2 cpio gawk gettext git libelf-dev libncurses-dev \
+            perl python3 rsync unzip xz-utils zstd
+
+      - name: 下载并校验 ImageBuilder
+        run: |
+          set -euo pipefail
+          echo "版本: 25.12.6 / mediatek-filogic"
+          curl -fsSLO "$TARGET_URL/$IB_TARBALL"
+          curl -fsSL "$TARGET_URL/sha256sums" -o sha256sums
+          # 只校验我们下载的这一个文件，其余条目忽略
+          sha256sum -c --ignore-missing sha256sums
+          tar --zstd -xf "$IB_TARBALL"
+          test -d "$IB_DIR"
+          ls -d "$IB_DIR"
+
+      - name: 组装镜像
+        run: |
+          set -euo pipefail
+          PACKAGES=$(echo "$PKGS ${{ inputs.extra_packages }}" | tr -s '[:space:]' ' ')
+          echo "PROFILE=${{ inputs.profile }}"
+          echo "PACKAGES=$PACKAGES"
+          # files/ 下的脚本需要可执行位（Windows 上克隆时容易丢）
+          find imagebuilder/files -type f -exec chmod +x {} \;
+          make -C "$IB_DIR" image \
+            PROFILE='${{ inputs.profile }}' \
+            PACKAGES="$PACKAGES" \
+            FILES="$GITHUB_WORKSPACE/imagebuilder/files"
+
+      - name: 列出产物并计算校验和
+        run: |
+          set -euo pipefail
+          OUT="$IB_DIR/bin/targets/mediatek/filogic"
+          ls -l "$OUT"
+          ( cd "$OUT" && sha256sum ./* 2>/dev/null || true )
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: imagebuilder-${{ inputs.profile }}-25.12.6
+          path: ${{ env.IB_DIR }}/bin/targets/mediatek/filogic/*
+          if-no-files-found: error
+          retention-days: 14
